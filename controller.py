@@ -10,6 +10,7 @@ import subprocess
 
 from twisted.internet import task
 from twisted.internet import reactor
+from twisted.internet import ssl
 from twisted.web import server
 from twisted.web.static import File
 from twisted.web.resource import Resource, IResource
@@ -174,7 +175,7 @@ class Controller(object):
                 server.sendmail(config["username"], config["to_email"], message.as_string())
                 server.close()
         except Exception as inst:
-            sys.syslog("Error sending email: " + str(inst))
+            syslog.syslog("Error sending email: " + str(inst))
 
     def send_pushbullet(self, door, title, message):
         try:
@@ -199,7 +200,7 @@ class Controller(object):
             print(response)
             door.pb_iden = json.loads(response)['iden']
         except Exception as inst:
-            sys.syslog("Error sending to pushbullet: " + str(inst))
+            syslog.syslog("Error sending to pushbullet: " + str(inst))
 
     def send_pushover(self, door, title, message):
         try:
@@ -215,7 +216,7 @@ class Controller(object):
                     }), { "Content-type": "application/x-www-form-urlencoded" })
             conn.getresponse()
         except Exception as inst:
-            sys.syslog("Error sending to pushover: " + str(inst))
+            syslog.syslog("Error sending to pushover: " + str(inst))
 
     def update_openhab(self, item, state):
         try:
@@ -225,7 +226,7 @@ class Controller(object):
             conn.request("PUT", "/rest/items/%s/state" % item, state)
             conn.getresponse()
         except:
-            sys.syslog("Error updating openhab: " + str(inst))
+            syslog.syslog("Error updating openhab: " + str(inst))
 
     def toggle(self, doorId):
         for d in self.doors:
@@ -240,6 +241,13 @@ class Controller(object):
             if d.last_state_time >= lastupdate:
                 updates.append((d.id, d.last_state, d.last_state_time))
         return updates
+
+    def get_config_with_default(self, config, param, default):
+        if not config:
+            return default
+        if not param in config:
+            return default
+        return config[param]
 
     def run(self):
         task.LoopingCall(self.status_check).start(0.5)
@@ -260,9 +268,16 @@ class Controller(object):
             root.putChild('clk', protected_resource)
         else:
             root.putChild('clk', ClickHandler(self))
+        
         site = server.Site(root)
-        reactor.listenTCP(self.config['site']['port'], site)  # @UndefinedVariable
-        reactor.run()  # @UndefinedVariable
+        
+        if not self.get_config_with_default(self.config['config'], 'use_https', False):
+            reactor.listenTCP(self.config['site']['port'], site)  # @UndefinedVariable
+            reactor.run()  # @UndefinedVariable
+        else:
+            sslContext = ssl.DefaultOpenSSLContextFactory(self.config['site']['ssl_key'], self.config['site']['ssl_cert'])
+            reactor.listenSSL(self.config['site']['port_secure'], site, sslContext)  # @UndefinedVariable
+            reactor.run()  # @UndefinedVariable
 
 class ClickHandler(Resource):
     isLeaf = True
